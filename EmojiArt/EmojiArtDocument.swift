@@ -6,25 +6,33 @@
 //
 
 import SwiftUI
+import Combine
 
 class EmojiArtDocument: ObservableObject {
     static let palette = "👻🔥🎪😉"
     static private let untitled = "EmojiArtDocument.untitled"
     
-    @Published private var emojiArt: EmojiArt {
-        didSet {
-            UserDefaults.standard.set(emojiArt.json, forKey: EmojiArtDocument.untitled)
-        }
-    }
+    @Published private var emojiArt: EmojiArt
     
     @Published private(set) var backgroundImage: UIImage?
+    
+    private var autosaveCancellable: AnyCancellable?
+    
+    private var fetchImageCancellable: AnyCancellable?
     
     var emojis: [EmojiArt.Emoji] {
         emojiArt.emojis
     }
     
+    var backgroundURL: URL? {
+        emojiArt.backgroundURL
+    }
+    
     init() {
         emojiArt = EmojiArt(json: UserDefaults.standard.data(forKey: EmojiArtDocument.untitled)) ?? EmojiArt()
+        autosaveCancellable = $emojiArt.sink { emojiArt in
+            UserDefaults.standard.set(emojiArt.json, forKey: EmojiArtDocument.untitled)
+        }
         fetchBackgroundImageData()
     }
     
@@ -59,16 +67,12 @@ class EmojiArtDocument: ObservableObject {
             return
         }
         
-        DispatchQueue.global(qos: .userInitiated).async {
-            if let imageData = try? Data(contentsOf: url) {
-                DispatchQueue.main.async {
-                    // make sure the downloaded image is for the current URL
-                    if url == self.emojiArt.backgroundURL {
-                        self.backgroundImage = UIImage(data: imageData)
-                    }
-                }
-            }
-        }
+        fetchImageCancellable?.cancel()
+        fetchImageCancellable = URLSession.shared.dataTaskPublisher(for: url)
+            .map { data, urlResponse in UIImage(data: data) }
+            .receive(on: DispatchQueue.main)
+            .replaceError(with: nil)
+            .assign(to: \EmojiArtDocument.backgroundImage, on: self)
         
     }
 }
